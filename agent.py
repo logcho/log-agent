@@ -28,20 +28,11 @@ class AgentState(TypedDict):
 # =====================================================================
 # 2. Define Tools
 # =====================================================================
-@tool
-def add(a: int, b: int) -> int:
-    """Add two integers together. Use this for basic addition operations."""
-    return a + b
+from os_tools import os_toolset
+from system_tools import system_toolset
 
-
-@tool
-def multiply(a: int, b: int) -> int:
-    """Multiply two integers together. Use this for basic multiplication operations."""
-    return a * b
-
-
-# List of tools available to the agent
-tools = [add, multiply]
+# List of all tools available to the agent
+tools = os_toolset + system_toolset
 tool_node = ToolNode(tools)
 
 
