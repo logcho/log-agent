@@ -31,9 +31,10 @@ class AgentState(TypedDict):
 from os_tools import os_toolset
 from system_tools import system_toolset
 from obsidian_tools import obsidian_toolset
+from gmail_tools import gmail_toolset
 
 # List of all tools available to the agent
-tools = os_toolset + system_toolset + obsidian_toolset
+tools = os_toolset + system_toolset + obsidian_toolset + gmail_toolset
 tool_node = ToolNode(tools)
 
 

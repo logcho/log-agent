@@ -48,6 +48,9 @@ def print_welcome_banner():
     banner_text.append("📝 Obsidian Notes & Graphs (obsidian):\n", style="bold cyan")
     banner_text.append("  • obsidian_set_vault, obsidian_get_vault, obsidian_create_note\n", style="white")
     banner_text.append("  • obsidian_connect_notes, obsidian_get_connections, obsidian_get_vault_stats\n", style="white")
+    banner_text.append("📧 Gmail Integration (gmail):\n", style="bold cyan")
+    banner_text.append("  • gmail_check_unread, gmail_search_emails, gmail_read_email\n", style="white")
+    banner_text.append("  • gmail_send_email, gmail_delete_email\n", style="white")
     banner_text.append("──────────────────────────────────────────────────────────\n", style="dim white")
     banner_text.append("Type 'exit', 'quit', or press Ctrl+C to end the session.", style="dim red")
     
