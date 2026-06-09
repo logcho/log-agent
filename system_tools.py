@@ -1,7 +1,14 @@
 import subprocess
 import os
 import pyautogui
+import time
 from langchain_core.tools import tool
+
+# Apple native Vision libraries for OCR
+import Quartz
+import Vision
+from Cocoa import NSURL
+from Foundation import NSDictionary
 
 # Set PyAutoGUI fail-safe to True.
 # If the user moves the mouse to any of the four corners of the screen,
@@ -229,6 +236,273 @@ def open_application(app_name_or_path: str) -> str:
         return f"Error opening application/file '{app_name_or_path}': {str(e)}"
 
 
+@tool
+def gui_get_screen_text() -> str:
+    """Perform native macOS OCR on the entire screen to extract and list all visible text.
+    
+    Returns a list of all detected text strings and their center coordinates (X, Y) in screen points,
+    which is useful to 'see' what is currently on the screen.
+    
+    Returns:
+        str: A formatted list of visible texts and coordinates, or an error.
+    """
+    try:
+        temp_path = os.path.abspath("ocr_screen_temp.png")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        screenshot = pyautogui.screenshot()
+        screenshot.save(temp_path)
+        
+        try:
+            screen_w, screen_h = pyautogui.size()
+            input_url = NSURL.fileURLWithPath_(temp_path)
+            input_image = Quartz.CIImage.imageWithContentsOfURL_(input_url)
+            
+            vision_request = Vision.VNRecognizeTextRequest.alloc().init()
+            vision_request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+            
+            vision_handler = Vision.VNImageRequestHandler.alloc().initWithCIImage_options_(
+                input_image, NSDictionary.dictionaryWithDictionary_({})
+            )
+            
+            success, error = vision_handler.performRequests_error_([vision_request], None)
+            if not success:
+                return f"OCR analysis failed: {error}"
+                
+            observations = vision_request.results()
+            if not observations:
+                return "No visible text detected on screen."
+                
+            lines = [f"Text detected on screen (Resolution: {screen_w}x{screen_h}):"]
+            for obs in observations:
+                top_candidate = obs.topCandidates_(1)[0]
+                text = top_candidate.string()
+                confidence = top_candidate.confidence()
+                
+                if confidence < 0.3:
+                    continue
+                    
+                bbox = obs.boundingBox()
+                try:
+                    origin, size = bbox
+                    norm_x, norm_y = origin
+                    norm_w, norm_h = size
+                except Exception:
+                    norm_x = bbox.origin.x
+                    norm_y = bbox.origin.y
+                    norm_w = bbox.size.width
+                    norm_h = bbox.size.height
+                    
+                x_center = int((norm_x + norm_w / 2) * screen_w)
+                y_center = int((1.0 - (norm_y + norm_h / 2)) * screen_h)
+                
+                lines.append(f"  • [X={x_center}, Y={y_center}] \"{text}\"")
+                
+            return "\n".join(lines)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    except Exception as e:
+        return f"Error getting screen text: {str(e)}"
+
+
+@tool
+def gui_click_text_on_screen(text_query: str, click_type: str = "single", occurrence: int = 1) -> str:
+    """Locate a specific text on screen using OCR and perform a mouse click on it.
+    
+    Args:
+        text_query (str): The text to search for on the screen (case-insensitive).
+        click_type (str, optional): Type of click: 'single', 'double', or 'right'. Defaults to 'single'.
+        occurrence (int, optional): If multiple instances of the text match, specify which one to click (1-indexed). Defaults to 1.
+        
+    Returns:
+        str: Success message confirming click coordinates, or an error.
+    """
+    try:
+        temp_path = os.path.abspath("ocr_click_temp.png")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        screenshot = pyautogui.screenshot()
+        screenshot.save(temp_path)
+        
+        try:
+            screen_w, screen_h = pyautogui.size()
+            input_url = NSURL.fileURLWithPath_(temp_path)
+            input_image = Quartz.CIImage.imageWithContentsOfURL_(input_url)
+            
+            vision_request = Vision.VNRecognizeTextRequest.alloc().init()
+            vision_request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+            
+            vision_handler = Vision.VNImageRequestHandler.alloc().initWithCIImage_options_(
+                input_image, NSDictionary.dictionaryWithDictionary_({})
+            )
+            
+            success, error = vision_handler.performRequests_error_([vision_request], None)
+            if not success:
+                return f"OCR analysis failed: {error}"
+                
+            observations = vision_request.results()
+            if not observations:
+                return "No text detected on screen."
+                
+            matches = []
+            query_lower = text_query.lower()
+            
+            for obs in observations:
+                top_candidate = obs.topCandidates_(1)[0]
+                text = top_candidate.string()
+                
+                if query_lower in text.lower():
+                    bbox = obs.boundingBox()
+                    try:
+                        origin, size = bbox
+                        norm_x, norm_y = origin
+                        norm_w, norm_h = size
+                    except Exception:
+                        norm_x = bbox.origin.x
+                        norm_y = bbox.origin.y
+                        norm_w = bbox.size.width
+                        norm_h = bbox.size.height
+                        
+                    x_center = int((norm_x + norm_w / 2) * screen_w)
+                    y_center = int((1.0 - (norm_y + norm_h / 2)) * screen_h)
+                    matches.append((text, x_center, y_center))
+            
+            if not matches:
+                return f"Text '{text_query}' not found on the screen."
+                
+            matches.sort(key=lambda m: (len(m[0]) - len(text_query), -len(m[0])))
+            
+            if occurrence > len(matches) or occurrence < 1:
+                return f"Found {len(matches)} match(es) for '{text_query}', but occurrence={occurrence} is out of range."
+                
+            matched_text, click_x, click_y = matches[occurrence - 1]
+            
+            pyautogui.moveTo(click_x, click_y, duration=0.2)
+            if click_type == "double":
+                pyautogui.doubleClick(click_x, click_y)
+            elif click_type == "right":
+                pyautogui.rightClick(click_x, click_y)
+            else:
+                pyautogui.click(click_x, click_y)
+                
+            return f"Successfully clicked {click_type} on '{matched_text}' at coordinates [X={click_x}, Y={click_y}]."
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    except Exception as e:
+        return f"Error clicking text: {str(e)}"
+
+
+@tool
+def gui_fill_labeled_input(label_text: str, text_to_type: str, direction: str = "right", offset: int = 100) -> str:
+    """Locate a labeled text input field on the screen, click on it, and type the specified text.
+    
+    This works by finding the coordinates of `label_text` (e.g. 'Username' or 'Search'),
+    clicking at a specified pixel offset in the given direction where the input box is located,
+    clearing the existing text (using command+A, backspace), and typing the new text.
+    
+    Args:
+        label_text (str): The label text identifying the input field.
+        text_to_type (str): The text string to enter into the field.
+        direction (str, optional): The relative direction of the input field from the label. 
+                                   Options: 'right', 'below'. Defaults to 'right'.
+        offset (int, optional): The distance in screen points from the center of the label to the click target. Defaults to 100.
+        
+    Returns:
+        str: Success message confirming coordinates and typed text, or an error.
+    """
+    try:
+        temp_path = os.path.abspath("ocr_input_temp.png")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        screenshot = pyautogui.screenshot()
+        screenshot.save(temp_path)
+        
+        try:
+            screen_w, screen_h = pyautogui.size()
+            input_url = NSURL.fileURLWithPath_(temp_path)
+            input_image = Quartz.CIImage.imageWithContentsOfURL_(input_url)
+            
+            vision_request = Vision.VNRecognizeTextRequest.alloc().init()
+            vision_request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+            
+            vision_handler = Vision.VNImageRequestHandler.alloc().initWithCIImage_options_(
+                input_image, NSDictionary.dictionaryWithDictionary_({})
+            )
+            
+            success, error = vision_handler.performRequests_error_([vision_request], None)
+            if not success:
+                return f"OCR analysis failed: {error}"
+                
+            observations = vision_request.results()
+            if not observations:
+                return "No text detected on screen."
+                
+            matches = []
+            query_lower = label_text.lower()
+            
+            for obs in observations:
+                top_candidate = obs.topCandidates_(1)[0]
+                text = top_candidate.string()
+                
+                if query_lower in text.lower():
+                    bbox = obs.boundingBox()
+                    try:
+                        origin, size = bbox
+                        norm_x, norm_y = origin
+                        norm_w, norm_h = size
+                    except Exception:
+                        norm_x = bbox.origin.x
+                        norm_y = bbox.origin.y
+                        norm_w = bbox.size.width
+                        norm_h = bbox.size.height
+                        
+                    x_center = int((norm_x + norm_w / 2) * screen_w)
+                    y_center = int((1.0 - (norm_y + norm_h / 2)) * screen_h)
+                    matches.append((text, x_center, y_center))
+                    
+            if not matches:
+                return f"Label '{label_text}' not found on the screen."
+                
+            matches.sort(key=lambda m: (len(m[0]) - len(label_text), -len(m[0])))
+            matched_label, label_x, label_y = matches[0]
+            
+            target_x, target_y = label_x, label_y
+            direction_clean = direction.lower().strip()
+            if direction_clean == "right":
+                target_x = label_x + offset
+            elif direction_clean == "below":
+                target_y = label_y + offset
+            else:
+                return f"Invalid direction '{direction}'. Supported directions: 'right', 'below'."
+                
+            pyautogui.moveTo(target_x, target_y, duration=0.2)
+            pyautogui.click(target_x, target_y)
+            time.sleep(0.1)
+            
+            pyautogui.hotkey('command', 'a')
+            time.sleep(0.05)
+            pyautogui.press('backspace')
+            time.sleep(0.05)
+            
+            pyautogui.write(text_to_type, interval=0.01)
+            
+            return (
+                f"Successfully located label '{matched_label}' at [X={label_x}, Y={label_y}]. "
+                f"Clicked target field at [X={target_x}, Y={target_y}] ({direction_clean} by {offset}) "
+                f"and entered '{text_to_type}'."
+            )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    except Exception as e:
+        return f"Error filling input: {str(e)}"
+
+
 # Export all defined system and GUI tools as a list
 system_toolset = [
     run_command,
@@ -239,5 +513,8 @@ system_toolset = [
     type_text,
     press_key,
     take_screenshot,
-    open_application
+    open_application,
+    gui_get_screen_text,
+    gui_click_text_on_screen,
+    gui_fill_labeled_input
 ]
